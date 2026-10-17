@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' data: blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="description" content="Draw a house on a blueprint, watch it build, walk through it, and get a rough materials list for your region.">
+<meta name="theme-color" content="#0f2a66">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Groundwork">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="stylesheet" href="fonts/fonts.css">
+<title>Groundwork</title>
+<style>
+  /* Layout: a full-screen 3D viewport under floating "paper token" controls — round white buttons that
+     grow labels when you tap the empty space beside them. The sheet is drafting vellum: cool white,
+     navy ink, amber for whatever is active. */
+  :root {
+    --bg: #0f2a66; --paper: #f4f6f9; --paper-2: #e8ecf2; --ink: #10204a; --ink-2: #4f5f7e; --ink-3: #8b98b3; --line: rgba(16, 32, 74, 0.12);
+    --token: rgba(255, 255, 255, 0.94); --token-ink: #16305f; --accent: #f3a83c; --accent-ink: #1c1200; --good: #3f9a6a; --warn: #d98a1e; --bad: #d64a4a;
+    --font: 'IBM Plex Sans', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+    --circ: 46px; --top-h: 62px; --radius: 14px; --shadow: 0 6px 18px rgba(6, 16, 44, 0.28), 0 1px 2px rgba(6, 16, 44, 0.2);
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--paper); font: 15px/1.45 var(--font); overflow: hidden; -webkit-text-size-adjust: 100%; overscroll-behavior: none; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  * { box-sizing: border-box; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 0; background: none; padding: 0; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h1, h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .eyebrow { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; }
+  [hidden] { display: none !important; }
+  #app { position: fixed; inset: 0; }
+  .screen { position: absolute; inset: 0; }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: rgba(15, 42, 102, 0.6); }
+
+  /* ---------------- start / setup (blueprint sheet) ---------------- */
+  #setup { overflow: auto; background: var(--bg); color: var(--paper); }
+  #setup .sheet-frame { position: absolute; inset: 14px; border: 3px double rgba(255,255,255,0.75); pointer-events: none; }
+  #setup .sheet-frame::before { content: ""; position: absolute; inset: 8px; border: 1px solid rgba(255,255,255,0.4); }
+  #setup .blueprint { position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(rgba(255,255,255,.16) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.16) 1px, transparent 1px); background-size: 20px 20px, 20px 20px, 100px 100px, 100px 100px; pointer-events: none; }
+  .setup-wrap { position: relative; max-width: 680px; margin: 0 auto; padding-block: 44px 60px; padding-left: max(28px, env(safe-area-inset-left, 0px)); padding-right: max(28px, env(safe-area-inset-right, 0px)); display: grid; gap: 22px; }
+  .brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .brand h1 { font-family: var(--mono); font-weight: 500; letter-spacing: 0.22em; font-size: 24px; }
+  .brand small { color: rgba(255,255,255,0.6); font-size: 13px; letter-spacing: .06em; text-transform: uppercase; }
+  .lede { color: rgba(255,255,255,0.78); max-width: 56ch; margin: 0; }
+  .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .tile { background: var(--paper); color: var(--ink); border-radius: 16px; padding: 18px 18px 16px; text-align: left; box-shadow: var(--shadow); display: grid; gap: 6px; min-width: 0; border: 2px solid transparent; }
+  .tile:active { transform: translateY(1px); }
+  .tile.primary { border-color: var(--accent); }
+  .tile b { font-size: 17px; font-weight: 600; }
+  .tile span { color: var(--ink-2); font-size: 13px; line-height: 1.4; }
+  .tile .glyph { width: 40px; height: 40px; border-radius: 50%; background: var(--ink); color: var(--paper); display: grid; place-items: center; margin-bottom: 4px; }
+  .tile .glyph svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .card { background: var(--paper); color: var(--ink); border-radius: 16px; padding: 18px; box-shadow: var(--shadow); }
+  .card .eyebrow { color: var(--ink-3); }
+  .steps { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+  .steps b { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-family: var(--mono); background: var(--paper-2); color: var(--ink-2); }
+  .steps b.on { background: var(--accent); color: var(--accent-ink); }
+  .steps i { flex: 1; height: 1px; background: var(--line); }
+  form { display: grid; gap: 16px; }
+  .field { display: grid; gap: 6px; }
+  .field > label, .field > .eyebrow { font-size: 12px; color: var(--ink-2); }
+  input[type=text], input[type=number], select, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); min-width: 0; }
+  select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-2) 50%), linear-gradient(135deg, var(--ink-2) 50%, transparent 50%); background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 32px; }
+  .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .mode { position: relative; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px; background: #fff; cursor: pointer; display: grid; gap: 4px; min-width: 0; }
+  .mode input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+  .mode b { font-weight: 600; }
+  .mode span { font-size: 12px; color: var(--ink-2); line-height: 1.35; }
+  .mode:has(input:checked) { border-color: var(--accent); background: #fff7ea; }
+  .seg { display: flex; border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; }
+  .seg label, .seg button { flex: 1; position: relative; text-align: center; padding: 9px 4px; font-size: 13px; color: var(--ink-2); cursor: pointer; min-width: 0; white-space: nowrap; }
+  .seg label input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+  .seg label:has(input:checked), .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .seg label + label, .seg button + button { border-left: 1px solid var(--line); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .prices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .prices label { display: grid; gap: 3px; font-size: 12px; color: var(--ink-2); min-width: 0; }
+  .prices input { padding: 7px 10px; }
+  .primary-btn { background: var(--accent); color: var(--accent-ink); font-weight: 600; padding: 13px 18px; border-radius: 12px; }
+  .ghost-btn { border: 1.5px solid var(--line); padding: 11px 14px; border-radius: 12px; color: var(--ink); background: #fff; }
+  .check { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--ink); }
+  .check input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .note { font-size: 12px; color: var(--ink-3); margin: 0; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row > * { min-width: 0; }
+  .grow { flex: 1 1 auto; }
+
+  /* ---------------- editor ---------------- */
+  #editor { background: var(--bg); touch-action: none; }
+  #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .dim { position: absolute; transform: translate(-50%, -50%); font: 12px var(--mono); background: rgba(244, 246, 249, 0.92); color: var(--ink); padding: 2px 7px; border-radius: 999px; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+  .dim.ghost { background: var(--accent); color: var(--accent-ink); font-weight: 500; }
+  .dim.room { background: rgba(16,32,74,0.55); color: rgba(255,255,255,0.9); font-family: var(--font); font-size: 11px; letter-spacing: .04em; box-shadow: none; }
+
+  /* token bars: circles that grow labels when the empty bar is tapped */
+  .bar { position: absolute; z-index: 5; display: flex; gap: 8px; align-items: center; padding: 6px; border-radius: 999px; }
+  .bar.open { background: rgba(16, 32, 74, 0.35); backdrop-filter: blur(8px); }
+  .bar .tok { position: relative; width: var(--circ); height: var(--circ); border-radius: 50%; background: var(--token); color: var(--token-ink); display: grid; place-items: center; box-shadow: var(--shadow); flex: 0 0 auto; }
+  .bar .tok svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .bar .tok.on { background: var(--accent); color: var(--accent-ink); }
+  .bar .tok.mono { font: 500 13px var(--mono); }
+  .bar .tok[disabled] { opacity: 0.4; }
+  .bar .tok .lbl { display: none; font: 500 13px var(--font); white-space: nowrap; pointer-events: none; padding-right: 4px; }
+  /* open: every circle grows into a pill with its name inside */
+  .bar.open .tok { width: auto; border-radius: 999px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 11px; }
+  .bar.open .tok .lbl { display: inline; }
+  .bar.open .tok .lbl:empty { display: none; }
+  #topbar { top: calc(env(safe-area-inset-top, 0px) + 10px); left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 16px); flex-wrap: wrap; justify-content: center; }
+  #topbar .gap { width: 6px; }
+  #rail { flex-direction: column; align-items: flex-start; left: max(10px, env(safe-area-inset-left, 0px)); top: calc(env(safe-area-inset-top, 0px) + 84px); max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 150px); overflow-y: auto; overflow-x: visible; scrollbar-width: none; }
+  #rail::-webkit-scrollbar { display: none; }
+  /* short landscape phones: smaller tokens so the whole rail fits */
+  @media (max-height: 600px) { :root { --circ: 38px; } .bar { gap: 6px; } #rail { top: calc(env(safe-area-inset-top, 0px) + 68px); gap: 6px; } .bar .tok svg { width: 20px; height: 20px; } }
+  #rail .sep { width: 24px; height: 1px; background: rgba(255,255,255,0.35); margin: 2px 0 2px 11px; }
+  #fab { flex-direction: column; align-items: flex-end; right: max(10px, env(safe-area-inset-right, 0px)); top: calc(env(safe-area-inset-top, 0px) + 84px); }
+  .bar .tok:hover .lbl { display: inline; }
+  .bar .tok:hover { width: auto; border-radius: 999px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 11px; }
+  @media (hover: none) { .bar .tok:hover { width: var(--circ); padding: 0; display: grid; } .bar .tok:hover .lbl { display: none; } .bar.open .tok:hover { width: auto; padding: 0 10px 0 11px; display: flex; } .bar.open .tok:hover .lbl { display: inline; } }
+  #hint { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: rgba(244, 246, 249, 0.94); color: var(--ink); border-radius: 999px; padding: 7px 14px; font-size: 13px; max-width: min(84vw, 560px); text-align: center; z-index: 4; pointer-events: none; box-shadow: var(--shadow); }
+  #hint b { font-weight: 600; }
+
+  /* bottom sheet (vellum) */
+  /* Bottom sheet with three resting heights (mini / half / full). Drag the grip or the title bar; the body scrolls inside. */
+  #sheet { --sheet-h: 46dvh; position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--paper); color: var(--ink); border-radius: 20px 20px 0 0; height: var(--sheet-h); max-height: calc(100dvh - 70px); transform: translateY(110%); transition: transform .22s ease, height .22s ease; display: flex; flex-direction: column; box-shadow: 0 -10px 40px rgba(0,0,0,0.35); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  #sheet.open { transform: none; }
+  #sheet.dragging { transition: none; }
+  #sheet[data-detent="mini"] { --sheet-h: 92px; }
+  #sheet[data-detent="half"] { --sheet-h: 46dvh; }
+  #sheet[data-detent="full"] { --sheet-h: 86dvh; }
+  #sheet .grip { width: 44px; height: 5px; border-radius: 3px; background: rgba(16,32,74,0.28); margin: 8px auto 0; flex: 0 0 auto; }
+  #sheet .grip-zone { touch-action: none; cursor: grab; flex: 0 0 auto; }
+  #sheet .grip-zone:active { cursor: grabbing; }
+  #sheet .detents { display: none; }
+  #sheet header { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 18px; flex: 0 0 auto; }
+  #sheet header h2 { font-size: 16px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #sheet .icon-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: var(--ink-2); }
+  #sheet .icon-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #sheet .body { overflow: auto; padding: 4px 18px 18px; padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px)); display: grid; gap: 14px; align-content: start; -webkit-overflow-scrolling: touch; }
+  .stat { display: grid; gap: 2px; }
+  .stat b { font-family: var(--mono); font-weight: 500; font-size: 15px; }
+  .stat span { font-size: 11px; color: var(--ink-3); letter-spacing: .06em; text-transform: uppercase; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sw { width: 34px; height: 34px; border-radius: 50%; border: 2px solid rgba(16,32,74,0.15); position: relative; box-shadow: inset 0 0 0 2px #fff; }
+  .sw.on { border-color: var(--accent); box-shadow: inset 0 0 0 2px #fff, 0 0 0 2px var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 7px 12px; border-radius: 999px; border: 1.5px solid var(--line); background: #fff; font-size: 13px; color: var(--ink-2); }
+  .chip.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 500; }
+  .btn { padding: 9px 13px; border-radius: 12px; border: 1.5px solid var(--line); background: #fff; font-size: 14px; color: var(--ink); }
+  .btn.danger { color: var(--bad); border-color: rgba(214,74,74,0.4); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+  .slider { width: 100%; accent-color: var(--accent); }
+  .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+  .item { display: grid; gap: 3px; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line); background: #fff; text-align: left; font-size: 13px; min-width: 0; color: var(--ink); }
+  .item small { color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
+  .item.on { border-color: var(--accent); background: #fff7ea; }
+  .roofs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .roofcard { display: grid; gap: 4px; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line); background: #fff; text-align: left; color: var(--ink); min-width: 0; }
+  .roofcard.on { border-color: var(--accent); background: #fff7ea; }
+  .roofcard svg { width: 100%; height: 44px; fill: none; stroke: var(--ink); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .roofcard b { font-size: 13px; }
+  .roofcard span { font-size: 11px; color: var(--ink-3); line-height: 1.3; }
+  .notes { display: grid; gap: 8px; }
+  .noteline { display: grid; grid-template-columns: 10px 1fr; gap: 10px; align-items: start; font-size: 13px; color: var(--ink-2); }
+  .noteline i { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--ink-3); }
+  .noteline.warn i { background: var(--warn); } .noteline.always i { background: var(--bad); }
+  .disclaimer { background: #fdecec; border: 1px solid rgba(214,74,74,0.45); border-radius: 12px; padding: 10px 12px; font-size: 13px; color: #8a2a2a; }
+  table.est { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.est th, table.est td { text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.est td.n, table.est th.n { text-align: right; font-family: var(--mono); white-space: nowrap; }
+  table.est tr.cat td { background: var(--paper-2); font-weight: 600; }
+  table.est tr.phase td { background: var(--ink); color: #fff; font-weight: 600; font-family: var(--mono); font-size: 12px; letter-spacing: .04em; }
+  table.est td small { display: block; color: var(--ink-3); font-size: 11px; }
+  .tablewrap { overflow-x: auto; max-width: 100%; }
+  textarea.code { font-family: var(--mono); font-size: 12px; min-height: 110px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; color: var(--ink-2); }
+  .kv b { color: var(--ink); font-weight: 500; font-family: var(--mono); }
+  .sheetimg { width: 100%; height: auto; border-radius: 10px; box-shadow: var(--shadow); display: block; }
+
+  /* walkthrough */
+  #walkUI { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+  #joy { position: absolute; left: max(22px, env(safe-area-inset-left, 0px)); bottom: calc(26px + env(safe-area-inset-bottom, 0px)); width: 124px; height: 124px; border-radius: 50%; background: rgba(255,255,255,0.14); border: 1.5px solid rgba(255,255,255,0.4); pointer-events: auto; touch-action: none; }
+  #joyKnob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; border-radius: 50%; background: var(--accent); transform: translate(-50%, -50%); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+  #walkExit { position: absolute; right: max(14px, env(safe-area-inset-right, 0px)); bottom: calc(26px + env(safe-area-inset-bottom, 0px)); pointer-events: auto; }
+  #walkPanel { position: absolute; right: max(14px, env(safe-area-inset-right, 0px)); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); pointer-events: auto; background: var(--paper); color: var(--ink); border-radius: 14px; padding: 10px 12px; display: grid; gap: 6px; font-size: 12px; width: 170px; box-shadow: var(--shadow); }
+  #walkPanel label { display: flex; justify-content: space-between; gap: 6px; color: var(--ink-2); }
+  #walkFloors { position: absolute; left: max(14px, env(safe-area-inset-left, 0px)); top: calc(env(safe-area-inset-top, 0px) + 14px); display: flex; align-items: center; gap: 8px; pointer-events: auto; background: var(--paper); color: var(--ink); border-radius: 999px; padding: 4px; box-shadow: var(--shadow); }
+  #walkFloors .btn { padding: 6px 10px; border-radius: 999px; }
+  #walkFloors[hidden] { display: none; }
+  #walkTip { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(36px + env(safe-area-inset-bottom, 0px)); font-size: 12px; color: var(--ink); background: var(--paper); padding: 6px 12px; border-radius: 999px; box-shadow: var(--shadow); }
+
+  #toast { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(64px + env(safe-area-inset-bottom, 0px)); background: var(--accent); color: var(--accent-ink); padding: 9px 14px; border-radius: 999px; font-size: 13px; font-weight: 500; z-index: 9; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 86vw; text-align: center; box-shadow: var(--shadow); }
+  #toast.show { opacity: 1; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 20; color: rgba(255,255,255,0.8); font-family: var(--mono); font-size: 13px; letter-spacing: .14em; }
+
+  @media (min-width: 900px) {
+    #sheet { left: auto; right: max(12px, env(safe-area-inset-right, 0px)); bottom: 12px; width: 400px; height: auto; max-height: calc(100dvh - 120px - env(safe-area-inset-top, 0px)); border-radius: 18px; transform: translateX(calc(100% + 24px)); }
+    #sheet[data-detent] { --sheet-h: auto; }
+    #sheet.open { transform: none; }
+    #sheet .grip { display: none; }
+    #sheet .grip-zone { cursor: default; }
+    #rail { gap: 10px; }
+    #fab { top: auto; bottom: 16px; right: auto; left: 76px; flex-direction: row; align-items: center; }
+  }
+  /* tablets in portrait (iPad 744–899 px wide): a centered sheet instead of a full-width slab */
+  @media (min-width: 641px) and (max-width: 899px) {
+    #sheet { left: 50%; right: auto; width: min(640px, calc(100vw - 24px)); margin-left: calc(min(640px, calc(100vw - 24px)) / -2); }
+  }
+  @media (max-width: 640px) {
+    :root { --circ: 42px; }
+    #topbar { gap: 5px; padding: 4px; }
+    #topbar .gap { width: 2px; }
+    #topbar .narrow-hide { display: none; }
+  }
+  @media (max-width: 520px) {
+    .modes { grid-template-columns: 1fr; }
+    .mode { grid-template-columns: auto 1fr; align-items: center; }
+    .mode span { grid-column: 2; }
+    .two { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { #sheet, .bar .tok .lbl, #toast { transition: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="loading">BUILDING TEXTURES…</div>
+
+  <section id="setup" class="screen" hidden>
+    <div class="blueprint"></div>
+    <div class="sheet-frame"></div>
+    <div class="setup-wrap">
+      <div class="brand"><h1>GROUNDWORK</h1><small>house planning sandbox</small></div>
+      <div id="startStep">
+        <p class="lede">Draw walls on a blueprint, watch the house frame itself, walk through it at eye height, and get a rough materials list for your region. Rough on purpose: it is for messing with layouts before you talk to an engineer.</p>
+        <div class="tiles" id="tiles"></div>
+      </div>
+      <form id="newForm" class="card" autocomplete="off" hidden>
+        <div class="steps" id="stepDots"></div>
+        <div id="step1">
+          <div class="field"><label for="pName">Project name</label><input type="text" id="pName" value="My cabin" maxlength="60"></div>
+          <div class="field" style="margin-top:14px"><div class="eyebrow">How deep do you want to go?</div><div class="modes" id="modes"></div></div>
+        </div>
+        <div id="step2" hidden>
+          <div class="two">
+            <div class="field"><label for="pRegion">Region</label><select id="pRegion"></select></div>
+            <div class="field"><label for="pLot">Property size</label><select id="pLot"></select></div>
+          </div>
+          <div class="field" style="margin-top:14px"><div class="eyebrow">Material pricing in your area (a 2×4, a sheet of OSB, a yard of concrete)</div><div class="seg" id="pTier"></div></div>
+        </div>
+        <div id="step3" hidden>
+          <div class="two">
+            <div class="field"><label for="pSeismic">Earthquake zone</label><select id="pSeismic"></select></div>
+            <div class="field"><label for="pSnow">Snow load</label><select id="pSnow"></select></div>
+            <div class="field"><label for="pFrost">Frost depth (inches)</label><input type="number" id="pFrost" min="0" max="120" step="6"></div>
+            <label class="check" for="pFlood" style="align-self:end"><input type="checkbox" id="pFlood"> Flood zone</label>
+          </div>
+          <div class="field" style="margin-top:14px"><div class="eyebrow">Manual pricing (leave blank to use region × tier)</div><div class="prices" id="pPrices"></div></div>
+        </div>
+        <div class="row" style="justify-content:space-between; margin-top:6px">
+          <button type="button" class="ghost-btn" id="backBtn">Back</button>
+          <button type="button" class="primary-btn" id="nextBtn">Next</button>
+        </div>
+        <p class="note">Everything stays on this device. Use Menu → Backup to copy a project as text.</p>
+      </form>
+    </div>
+  </section>
+
+  <section id="editor" class="screen" hidden>
+    <canvas id="gl"></canvas>
+    <div id="labels"></div>
+    <nav id="topbar" class="bar" aria-label="Views"></nav>
+    <nav id="rail" class="bar" aria-label="Tools"></nav>
+    <nav id="fab" class="bar" aria-label="Camera"></nav>
+    <div id="hint"></div>
+    <aside id="sheet" aria-live="polite" data-detent="half"><div class="grip-zone" id="sheetGrip"><div class="grip"></div><header><h2 id="sheetTitle"></h2><button class="icon-btn" id="sheetClose" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></header></div><div class="body" id="sheetBody"></div></aside>
+    <div id="walkUI" hidden>
+      <div id="joy"><div id="joyKnob"></div></div>
+      <div id="walkPanel">
+        <label for="eyeH">Eye height <b class="mono" id="eyeHVal">5′6″</b></label><input type="range" id="eyeH" class="slider" min="1" max="7.5" step="0.05" value="5.5">
+        <label for="fovR">Field of view <b class="mono" id="fovVal">80°</b></label><input type="range" id="fovR" class="slider" min="50" max="110" step="1" value="80">
+      </div>
+      <div id="walkTip">Drag to look · joystick to move · tap a door to open it · walk up the stairs</div>
+      <div id="walkFloors"><button class="btn" id="walkDown" aria-label="Floor below">▼</button><b class="mono" id="walkFloorLbl">Floor 1</b><button class="btn" id="walkUp" aria-label="Floor above">▲</button></div>
+      <button class="btn primary" id="walkExit">Exit walkthrough</button>
+    </div>
+    <div id="toast" role="status"></div>
+  </section>
+</div>
+
+<script type="module" src="js/app.js"></script>
+<script type="module" src="js/offline.js"></script>
+</body>
+</html>
